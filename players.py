@@ -110,7 +110,7 @@ class Tile:
         pass
 
     # Turn this object into a string
-    def __str__(self): return "tile"
+    #def __str__(self): return "tile"
 
 # A tile factory that returns new tiles based on the character given
 # Takes as input a configuration given as a Python dictionary.
@@ -154,7 +154,8 @@ class Player(Tile):
 
         # Register for clock ticks
         self.board.registerForClockTick(self)
-        
+
+        self.canMove = True
     # Set the speed of some object
     def setSpeed(self,speed):
         # It had better be a two-tuple
@@ -217,7 +218,29 @@ class Player(Tile):
     #  a tile to which it cannot move, you must set the `canMove`
     #  field to False (it should be set to True) otherwise.
     def clockTick(self,fps,num):
-        return
+
+        for i in range(num):
+            self.ticks = (self.ticks[0] + abs(self.speed[0]), self.ticks[1] + abs(self.speed[1]))
+            #Initialize self.ticks, as a tuple with the speed in the x-direction, and the y-direction.
+            #Each time clockTick is called, self.ticks increases by the speed vector.
+            
+            #Check to see if you can move:
+            if self.canMove:
+                if self.ticks[0] >= fps:                                                         #If so, check if the speed has "caught up" to the frames per second
+                    if self.canMoveTo(self.xPosition + self.sign(self.speed[0]), self.yPosition): #If it has, see if you can move.
+                        self.move(self.sign(self.speed[0]),0)                                     #Move accordingly, using the sign of the speed vector. 
+                        self.ticks = (self.ticks[0] - fps, self.ticks[1])                         #Make sure to reset self.ticks so it accounts for fractional movement.
+                    else:
+                        self.canMove = False #If you can't move, set self.canMove to False
+                        
+               #Perform the same sequence for the y-direction.
+                if self.ticks[1] >= fps:
+                    if self.canMoveTo(self.xPosition, self.yPosition + self.sign(self.speed[1])):
+                        self.move(0, self.sign(self.speed[1]))
+                        self.ticks = (self.ticks[0], self.ticks[1] - fps)
+                    else:
+                        self.canMove = False
+                              
 
     # Attempt to move the player (+x, +y) units, where x is in the
     # range {-1, 0, 1} and y is in the range {-1, 0, 1}. For example,
@@ -303,9 +326,21 @@ class Stone(Player):
     # - If the movement failed (e.g., because the stone hit a wall)
     # you should remove this tile from the board. 
     def clockTick(self,fps,num):
-        return
+        super().clockTick(fps, num)                 #Call the parent's clockTick method.
+        if self.canMove == False:                   #if you can't move to a certain location,
+            self.board.removeTile(self)             #remove the stone from the board.
+            self.board.unregisterForClockTick(self) #unregister for clockTick.
 
     def __str__(self): return "stone"
+
+    #I added a handleCollisionWith method for the Stone class as a precaution. 
+    def handleCollisionWith(self, other):
+        #If the stone collides with a squirrel, decrement 10 feul from the board.
+        if (other.tileType == "squirrel"):
+            self.board.state.decrementFuel(10)
+        #If the stone collides with a ferret, subtract 15 hp from the ferret. 
+        if (other.tileType == "ferret"):
+            other.subtractHp(15)
 
 # A health pack gives the player life once they touch it.
 class Health(Player):
@@ -333,8 +368,12 @@ class Health(Player):
     #   remove the tile from the board.
     #   - If it is not, it should not do anything.
     def handleCollisionWith(self,other):
-        return
-
+        #If the tile being collided with is a squirrel...
+        if (other.tileType == "squirrel"):
+            self.board.state.incrementFuel(15)   #Subtract add 15 fuel
+            self.board.removeTile(self)          #Remove the health pack from the board.
+        
+                       
     def __str__(self): return "healthpack"
 
 # The main player in the game (i.e., the squirrel)
@@ -401,7 +440,22 @@ class Squirrel(Player):
     # - Ensure that you make the stone register for clock ticks
     # (otherwise it won't move)
     def fireStone(self):
-        return
+
+        #Set the stone's starting position. 
+        startX = self.xPosition + self.movementVector[0] 
+        startY = self.yPosition + self.movementVector[1]
+        
+        stone = Stone((startX, startY),self.board)     #Create a stone object. 
+
+        if self.canMoveTo(startX, startY):             #If there isn't a wall at the starting position.                      
+            if self.board.state.hp < 10:               #If the health of the squirrel below 10, do nothing. It cannot fire a stone.
+                return
+            else:
+                self.board.addTile(stone)               #Otherwise, add the stone to the board, and set the stone's speed.
+                stone.setSpeed((self.STONESPEED * self.movementVector[0], self.STONESPEED * self.movementVector[1]))
+                self.board.registerForClockTick(stone)  #Register the stone for clockTIck()
+                self.board.state.decrementFuel(10)      #Subtract 10 fuel. 
+        #self.board.removeTile(stone) 
 
     def move(self,x,y):
         super().move(x,y)
@@ -424,8 +478,11 @@ class Squirrel(Player):
     #  - ferret <-- Subtract 15 fuel
     #  - stone  <-- Subtract 10 fuel
     def handleCollisionWith(self,other):
-        return
-
+        if (other.tileType == "ferret"):            #If the other tile is a ferret, subtract 15 fuel. 
+            self.board.state.decrementFuel(15)
+        if (other.tileType == "stone"):
+            self.board.state.decrementFuel(10)      #If the other tile is a stone, subtract 10 fuel. 
+        
     def __str__(self): return "squirrel"
 
 # A "square" AI player. This AI player is a ferret that walks around
@@ -444,11 +501,15 @@ class SquareAIFerret(Player):
         self.tileType = "ferret"
         self.STONESPEED = 8
 
+        
+    def clockTick(self,fps,num):       
+        super().clockTick(fps,num)
+        
     # --------------------------------------------------------------
     # TASK 6 [10 points]
     # --------------------------------------------------------------
 
-    # Move should implemented in such a way that the ferret AI
+    # Move should be implemented in such a way that the ferret AI
     # character walks around the board in a length 5 square. For
     # example, if the ferret starts at (5,5), the first step should be
     # to (6,5), then (7,5) and so on until reaching (10,5). At that
@@ -463,8 +524,48 @@ class SquareAIFerret(Player):
     # As a hint: I would suggest adding a `numTicks` member variable
     # to this class and then incrementing it upon each call to `move`.
     def move(self,x,y):
-        return
+        self.numTicks = self.numTicks + 1
+      #Every seventh time 'move' is called, fire a stone. 
+        if self.numTicks % 7 == 0:   #If numTicks is a multiple of 7, fire a stone. 
+            self.fireStone()
 
+        #For every fifth tick, 
+        if self.numTicks % 5 == 0:          
+            if self.speed[0] == 5:      #If the speed in the x-direction is 5...       
+                self.setSpeed((0,5))    #Start moving down. Set the speed in the y-direction to (0,5)
+                 
+            elif self.speed[0] == -5:   #If the speed in the x-direction is -5...
+                self.setSpeed((0,-5))   #Start moving up. Set the speed in the y-direction to (0,-5)
+                
+            elif self.speed[1] == 5:    #If the speed in the y-direction is 5...
+                self.setSpeed((-5,0))   #Start moving left. Set the speed in the x-direction to (-5,0)
+                
+            elif self.speed[1] == -5:   #If the speed in the y-direction is 5...
+                self.setSpeed((5,0))    #Start moving right. Set the speed in the x-direction to (5,0)
+                                         
+        #Go right if...
+        if self.speed[0] == 5:
+            x = 1
+            y = 0
+        
+        #Go left if...
+        elif self.speed[0] == -5:
+            x = -1
+            y = 0
+
+        #Go up if...
+        elif self.speed[1] == 5:
+            x = 0
+            y = 1
+
+        #Go down if...
+        elif self.speed[1] == -5:
+            x = 0
+            y = -1
+
+        super().move(x,y)
+
+   	 
     # --------------------------------------------------------------
     # TASK 7 [5 points]
     # --------------------------------------------------------------
@@ -475,14 +576,32 @@ class SquareAIFerret(Player):
     # (otherwise the stone would just sit there). Just as in
     # `Squirrel`, your initial coordinate must be x + x1, y + y1.
     def fireStone(self):
-        return
+        #Create a speed vector, for the stone's speed in the x and y direction, randomizing it each time.
+        SPEEDVECTOR = ((random.randint(-1,1) * self.STONESPEED), (random.randint(-1,1) * self.STONESPEED))
+
+        #If both x and y speeds are 0, do nothing. The stone cannot move. 
+        if SPEEDVECTOR[0] == 0 and SPEEDVECTOR[1] == 0:
+            return
+
+        #Set the stone's starting position based on the ferret's current position, and the direction the stone is going.                      
+        startX = self.xPosition + self.sign(SPEEDVECTOR[0])
+        startY = self.yPosition + self.sign(SPEEDVECTOR[1])
+
+        if self.canMoveTo(startX, startY):              #If there isn't a wall at the starting position,
+            stone = Stone((startX, startY),self.board)  #Create a stone object and set the speed of the stone.
+            stone.setSpeed((SPEEDVECTOR))
+            stone.board.registerForClockTick(stone)     #Register the stone for clockTick()
+            self.board.addTile(stone)                   #Add the stone to the board.
+
 
     # If we collide with a stone, we subtract 15 HP.
     def handleCollisionWith(self, other):
-        # If we collided with the squirrel
         if (other.tileType == "stone"):
             self.subtractHp(15)
-
+        # If we collided with the squirrel, decrement the squirrel's fuel by 15
+        if (other.tileType == "squirrel"):
+            other.board.state.decrementFuel(15)
+            
     def getImage(self):
         return self.pic
 
@@ -500,6 +619,10 @@ class SquareAIFerret(Player):
     #  - If the hp now becomes below 0, this tile should be removed
     #  from the board.
     def subtractHp(self,hp):
-        return
+        self.hp = self.hp - hp                          #Subtract hp from the original amount of hp, each time this is called. 
+
+        if self.hp < 0:                                 #If hp falls below 0...
+            self.board.removeTile(self)                 #Remove this ferret from the board
+            self.board.unregisterForClockTick(self)     #Unregister for ClockTick so the ferret doesn't come back to life on the next game loop.
 
     def __str__(self): return "ferret"
